@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CourseMate Agent</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <h1>CourseMate Agent</h1>
+            <p>Using local material: <strong>{{ file_name }}</strong></p>
+          </div>
+          <span class="status">Local context + external API</span>
+        </header>
+
+        <form id="ask-form" class="ask-panel">
+          <label for="question">Question</label>
+          <div class="input-row">
+            <textarea
+              id="question"
+              name="question"
+              rows="3"
+              placeholder="Ask about prompting, Experiment 2, or summarize the main content"
+              required
+            ></textarea>
+            <button type="submit">Ask</button>
+          </div>
+        </form>
+
+        <section class="examples" aria-label="Example questions">
+          <button type="button" data-question="prompting">prompting</button>
+          <button type="button" data-question="summarize the main content">summarize</button>
+          <button type="button" data-question="What are zero-shot and k-shot prompting?">zero-shot vs k-shot</button>
+        </section>
+
+        <section class="result-grid">
+          <article class="panel">
+            <div class="panel-heading">
+              <h2>Agent Answer</h2>
+              <span id="api-badge">Ready</span>
+            </div>
+            <pre id="answer">Ask a question to start.</pre>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading">
+              <h2>Retrieved Context</h2>
+              <span id="mode-badge">-</span>
+            </div>
+            <pre id="context">The relevant course material will appear here.</pre>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const form = document.querySelector("#ask-form");
+      const questionInput = document.querySelector("#question");
+      const answer = document.querySelector("#answer");
+      const context = document.querySelector("#context");
+      const apiBadge = document.querySelector("#api-badge");
+      const modeBadge = document.querySelector("#mode-badge");
+
+      async function askQuestion(question) {
+        answer.textContent = "Thinking...";
+        context.textContent = "Retrieving local course context...";
+        apiBadge.textContent = "Working";
+        modeBadge.textContent = "-";
+
+        try {
+          const response = await fetch("/ask", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question })
+          });
+
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.error || "Request failed.");
+          }
+
+          answer.textContent = data.answer;
+          context.textContent = data.context || "No context returned.";
+          apiBadge.textContent = data.used_api ? "API used" : "API not configured";
+          modeBadge.textContent = data.retrieval_mode;
+        } catch (error) {
+          answer.textContent = error.message;
+          context.textContent = "";
+          apiBadge.textContent = "Error";
+        }
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const question = questionInput.value.trim();
+        if (question) {
+          askQuestion(question);
+        }
+      });
+
+      document.querySelectorAll("[data-question]").forEach((button) => {
+        button.addEventListener("click", () => {
+          questionInput.value = button.dataset.question;
+          askQuestion(button.dataset.question);
+        });
+      });
+    </script>
+  </body>
+</html>
