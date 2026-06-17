@@ -3,6 +3,8 @@ import json
 import re
 import sys
 import traceback
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -17,6 +19,34 @@ from agent import answer_question
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 ALLOWED_SUFFIXES = {".pptx", ".pdf", ".txt"}
+
+
+def normalize_base_url(base_url):
+    return (base_url or "https://api.openai.com/v1").strip().rstrip("/")
+
+
+def fetch_models(api_key, base_url):
+    endpoint = f"{normalize_base_url(base_url)}/models"
+    request = urllib.request.Request(
+        endpoint,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="GET",
+    )
+
+    with urllib.request.urlopen(request, timeout=30) as response:
+        data = json.loads(response.read().decode("utf-8"))
+
+    raw_models = data.get("data", [])
+    models = []
+    for item in raw_models:
+        model_id = item.get("id") if isinstance(item, dict) else None
+        if model_id:
+            models.append(model_id)
+
+    return sorted(set(models))
 
 
 def safe_filename(name):
@@ -82,6 +112,10 @@ class CourseMateHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             path = urlparse(self.path).path
+            if path == "/models":
+                self._handle_models()
+                return
+
             if path != "/ask":
                 self._send(404, "Not found")
                 return
@@ -129,6 +163,50 @@ class CourseMateHandler(BaseHTTPRequestHandler):
                     "traceback": traceback.format_exc(),
                 },
             )
+
+    def _handle_models(self):
+        data = self._parse_json()
+        if isinstance(data, tuple):
+            status, payload = data
+            self._send_json(status, payload)
+            return
+
+        api_key = (data.get("api_key") or "").strip()
+        base_url = (data.get("base_url") or "").strip()
+        if not api_key:
+            self._send_json(400, {"error": "请先输入 API Key。"})
+            return
+
+        try:
+            models = fetch_models(api_key, base_url)
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")
+            self._send_json(
+                400,
+                {
+                    "error": f"连接失败（HTTP {error.code}）。",
+                    "detail": detail,
+                },
+            )
+            return
+        except Exception as error:
+            self._send_json(
+                400,
+                {
+                    "error": f"连接失败：{error}",
+                    "detail": traceback.format_exc(),
+                },
+            )
+            return
+
+        self._send_json(
+            200,
+            {
+                "ok": True,
+                "models": models,
+                "message": f"连接成功，获取到 {len(models)} 个模型。",
+            },
+        )
 
     def _parse_json(self):
         length = int(self.headers.get("Content-Length", "0"))

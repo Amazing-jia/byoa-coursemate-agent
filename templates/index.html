@@ -36,7 +36,7 @@
                 id="question"
                 name="question"
                 rows="4"
-                placeholder="例如：总结这些课件的主要内容 / prompting 技术有哪些 / 比较几个文件里的重点"
+                placeholder="例如：实验二要求是什么 / prompting 技术有哪些 / 比较几个文件里的重点"
                 required
               ></textarea>
             </div>
@@ -53,7 +53,7 @@
           <section class="panel config-panel">
             <div class="panel-heading">
               <h2>API 设置</h2>
-              <span>OpenAI 兼容接口</span>
+              <span id="connection-badge">未检测</span>
             </div>
 
             <div class="field">
@@ -71,7 +71,7 @@
             <div class="field">
               <label for="api-key">API Key</label>
               <input id="api-key" name="api_key" type="password" autocomplete="off" placeholder="在这里输入你的 API Key">
-              <p class="hint">提交后页面会自动清空 API Key，避免截图或演示时泄露。</p>
+              <p class="hint">检测连接成功后会记住在本浏览器本地，下次提问自动使用。输入框仍会以密码形式隐藏。</p>
             </div>
 
             <div class="field">
@@ -81,13 +81,20 @@
 
             <div class="field">
               <label for="model">模型名称</label>
-              <input id="model" name="model" type="text" value="gpt-4.1-mini">
+              <input id="model" name="model" type="text" list="model-options" value="gpt-4.1-mini">
+              <datalist id="model-options"></datalist>
+              <p id="model-hint" class="hint">检测连接后会在这里显示该 API 可用模型。</p>
+            </div>
+
+            <div class="actions">
+              <button id="test-api" type="button" class="secondary-button">检测连接并获取模型</button>
+              <button id="forget-api" type="button" class="quiet-button">清除记忆</button>
             </div>
           </section>
         </section>
 
         <section class="examples" aria-label="示例问题">
-          <button type="button" data-question="总结这些资料的主要内容">总结资料</button>
+          <button type="button" data-question="实验二要求是什么？">实验二要求</button>
           <button type="button" data-question="prompting 技术有哪些？">prompting 技术</button>
           <button type="button" data-question="zero-shot 和 k-shot prompting 有什么区别？">zero-shot vs k-shot</button>
         </section>
@@ -121,6 +128,14 @@
     </main>
 
     <script>
+      const STORAGE_KEYS = {
+        provider: "coursemate.provider",
+        apiKey: "coursemate.apiKey",
+        baseUrl: "coursemate.baseUrl",
+        model: "coursemate.model",
+        models: "coursemate.models"
+      };
+
       const providerPresets = {
         openai: {
           baseUrl: "https://api.openai.com/v1",
@@ -155,7 +170,12 @@
       const apiKeyInput = document.querySelector("#api-key");
       const baseUrlInput = document.querySelector("#base-url");
       const modelInput = document.querySelector("#model");
+      const modelOptions = document.querySelector("#model-options");
+      const modelHint = document.querySelector("#model-hint");
       const useApiInput = document.querySelector("#use-api");
+      const testApiButton = document.querySelector("#test-api");
+      const forgetApiButton = document.querySelector("#forget-api");
+      const connectionBadge = document.querySelector("#connection-badge");
       const answer = document.querySelector("#answer");
       const context = document.querySelector("#context");
       const sourceExcerpt = document.querySelector("#source-excerpt");
@@ -163,11 +183,103 @@
       const modeBadge = document.querySelector("#mode-badge");
       const sourceBadge = document.querySelector("#source-badge");
 
+      function setModelOptions(models) {
+        modelOptions.innerHTML = "";
+        for (const model of models) {
+          const option = document.createElement("option");
+          option.value = model;
+          modelOptions.appendChild(option);
+        }
+        modelHint.textContent = models.length > 0
+          ? `已获取 ${models.length} 个模型，可直接输入或从候选中选择。`
+          : "该接口未返回模型列表，可以手动填写模型名称。";
+      }
+
+      function saveApiConfig(models = []) {
+        localStorage.setItem(STORAGE_KEYS.provider, provider.value);
+        localStorage.setItem(STORAGE_KEYS.apiKey, apiKeyInput.value.trim());
+        localStorage.setItem(STORAGE_KEYS.baseUrl, baseUrlInput.value.trim());
+        localStorage.setItem(STORAGE_KEYS.model, modelInput.value.trim());
+        localStorage.setItem(STORAGE_KEYS.models, JSON.stringify(models));
+      }
+
+      function loadApiConfig() {
+        const savedProvider = localStorage.getItem(STORAGE_KEYS.provider);
+        const savedKey = localStorage.getItem(STORAGE_KEYS.apiKey);
+        const savedBaseUrl = localStorage.getItem(STORAGE_KEYS.baseUrl);
+        const savedModel = localStorage.getItem(STORAGE_KEYS.model);
+        const savedModels = localStorage.getItem(STORAGE_KEYS.models);
+
+        if (savedProvider) provider.value = savedProvider;
+        if (savedKey) apiKeyInput.value = savedKey;
+        if (savedBaseUrl) baseUrlInput.value = savedBaseUrl;
+        if (savedModel) modelInput.value = savedModel;
+
+        if (savedModels) {
+          try {
+            setModelOptions(JSON.parse(savedModels));
+          } catch {
+            setModelOptions([]);
+          }
+        }
+
+        if (savedKey) {
+          connectionBadge.textContent = "已记忆";
+        }
+      }
+
       provider.addEventListener("change", () => {
         const preset = providerPresets[provider.value];
         if (!preset) return;
         baseUrlInput.value = preset.baseUrl;
         modelInput.value = preset.model;
+        connectionBadge.textContent = "未检测";
+      });
+
+      testApiButton.addEventListener("click", async () => {
+        const apiKey = apiKeyInput.value.trim();
+        if (!apiKey) {
+          connectionBadge.textContent = "缺少 Key";
+          modelHint.textContent = "请先输入 API Key。";
+          return;
+        }
+
+        connectionBadge.textContent = "检测中";
+        modelHint.textContent = "正在连接 API 并获取模型列表...";
+
+        try {
+          const response = await fetch("/models", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              api_key: apiKey,
+              base_url: baseUrlInput.value.trim()
+            })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.error || "连接失败。");
+          }
+
+          const models = data.models || [];
+          setModelOptions(models);
+          if (models.length > 0 && !models.includes(modelInput.value.trim())) {
+            modelInput.value = models[0];
+          }
+          saveApiConfig(models);
+          connectionBadge.textContent = "连接成功";
+        } catch (error) {
+          connectionBadge.textContent = "连接失败";
+          modelHint.textContent = error.message;
+        }
+      });
+
+      forgetApiButton.addEventListener("click", () => {
+        Object.values(STORAGE_KEYS).forEach((key) => localStorage.removeItem(key));
+        apiKeyInput.value = "";
+        setModelOptions([]);
+        connectionBadge.textContent = "已清除";
+        modelHint.textContent = "已清除本浏览器保存的 API 设置。";
       });
 
       async function askQuestion(question) {
@@ -180,6 +292,9 @@
           return;
         }
 
+        const rememberedKey = localStorage.getItem(STORAGE_KEYS.apiKey) || "";
+        const apiKey = apiKeyInput.value.trim() || rememberedKey;
+
         answer.textContent = "正在检索资料并生成回答...";
         context.textContent = "正在读取上传的课程资料...";
         sourceExcerpt.textContent = "正在选择最相关原文片段...";
@@ -187,7 +302,6 @@
         modeBadge.textContent = "-";
         sourceBadge.textContent = `${fileInput.files.length} 个文件`;
 
-        const apiKey = apiKeyInput.value.trim();
         const formData = new FormData();
         formData.append("question", question);
         formData.append("api_key", apiKey);
@@ -198,8 +312,6 @@
         for (const file of fileInput.files) {
           formData.append("material", file);
         }
-
-        apiKeyInput.value = "";
 
         try {
           const response = await fetch("/ask", {
@@ -240,6 +352,8 @@
           askQuestion(button.dataset.question);
         });
       });
+
+      loadApiConfig();
     </script>
   </body>
 </html>

@@ -191,6 +191,25 @@ button:hover {
   background: var(--accent-dark);
 }
 
+.secondary-button {
+  background: var(--button-dark);
+}
+
+.secondary-button:hover {
+  background: #1d2b38;
+}
+
+.quiet-button {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+}
+
+.quiet-button:hover {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
 .toggle {
   display: inline-flex;
   align-items: center;
