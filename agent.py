@@ -69,7 +69,8 @@ def infer_keyword(question):
 
 def question_tokens(question):
     tokens = re.findall(r"[A-Za-z][A-Za-z0-9_-]+|[\u4e00-\u9fff]{2,}", question)
-    return [token.lower() for token in tokens]
+    stop_words = {"什么", "哪些", "这个", "这些", "资料", "课件", "内容", "主要", "区别"}
+    return [token.lower() for token in tokens if token not in stop_words]
 
 
 def normalize_file_paths(file_paths):
@@ -81,11 +82,10 @@ def normalize_file_paths(file_paths):
 
 
 def read_materials(file_paths):
-    paths = normalize_file_paths(file_paths)
     sources = []
     errors = []
 
-    for path in paths:
+    for path in normalize_file_paths(file_paths):
         text = read_local_file(path)
         if text.startswith("File not found") or text.startswith("Unsupported"):
             errors.append(text)
@@ -103,51 +103,76 @@ def read_materials(file_paths):
 
 
 def format_sources_full_text(sources):
-    parts = []
-    for source in sources:
-        parts.append(f"===== {source['file_name']} =====\n{source['text']}")
-    return "\n\n".join(parts)
+    return "\n\n".join(
+        f"===== {source['file_name']} =====\n{source['text']}" for source in sources
+    )
 
 
 def split_source_blocks(source):
-    raw_blocks = [block.strip() for block in source["text"].split("\n\n") if block.strip()]
-    if not raw_blocks:
-        raw_blocks = [line.strip() for line in source["text"].splitlines() if line.strip()]
+    blocks = [block.strip() for block in source["text"].split("\n\n") if block.strip()]
+    if not blocks:
+        blocks = [line.strip() for line in source["text"].splitlines() if line.strip()]
 
     return [
         {
             "file_name": source["file_name"],
+            "index": index,
             "text": block,
         }
-        for block in raw_blocks
+        for index, block in enumerate(blocks, start=1)
     ]
 
 
-def choose_source_excerpt(question, sources, max_chars=1800):
+def trim_around_match(text, tokens, max_chars):
+    if len(text) <= max_chars:
+        return text
+
+    lowered = text.lower()
+    positions = [lowered.find(token) for token in tokens if token and lowered.find(token) >= 0]
+    center = min(positions) if positions else 0
+    half = max_chars // 2
+    start = max(0, center - half)
+    end = min(len(text), start + max_chars)
+
+    if start > 0:
+        line_start = text.find("\n", start)
+        if line_start != -1 and line_start < center:
+            start = line_start + 1
+    if end < len(text):
+        line_end = text.rfind("\n", start, end)
+        if line_end > start:
+            end = line_end
+
+    prefix = "...\n" if start > 0 else ""
+    suffix = "\n..." if end < len(text) else ""
+    return prefix + text[start:end].strip() + suffix
+
+
+def choose_source_excerpt(question, sources, preferred_text="", max_chars=4000):
     tokens = question_tokens(question)
     keyword = infer_keyword(question).lower()
-    blocks = []
+    preferred_lower = (preferred_text or "").lower()
 
+    candidates = []
     for source in sources:
-        blocks.extend(split_source_blocks(source))
+        candidates.extend(split_source_blocks(source))
 
-    if not blocks:
+    if not candidates:
         return ""
 
-    def score(block):
-        text = block["text"].lower()
-        token_score = sum(1 for token in tokens if token in text)
-        keyword_score = 3 if keyword and keyword in text else 0
-        return token_score + keyword_score
+    def score(candidate):
+        text = candidate["text"]
+        lowered = text.lower()
+        token_hits = sum(lowered.count(token) for token in tokens if token)
+        unique_hits = sum(1 for token in tokens if token and token in lowered)
+        keyword_hit = 4 if keyword and keyword in lowered else 0
+        preferred_hit = 8 if preferred_lower and lowered[:220] in preferred_lower else 0
+        density = token_hits / max(len(text), 1)
+        return (unique_hits * 10) + token_hits + keyword_hit + preferred_hit + density
 
-    ranked = sorted(blocks, key=score, reverse=True)
-    selected = ranked[0]
-    excerpt = f"===== {selected['file_name']} =====\n{selected['text']}"
-
-    if len(excerpt) > max_chars:
-        excerpt = excerpt[:max_chars].rstrip() + "..."
-
-    return excerpt
+    selected = max(candidates, key=score)
+    excerpt = trim_around_match(selected["text"], tokens + [keyword], max_chars)
+    return f"===== {selected['file_name']} / 片段 {selected['index']} =====\n{excerpt}"
 
 
 def retrieve_context(question, file_paths):
@@ -159,11 +184,12 @@ def retrieve_context(question, file_paths):
         return "请先上传至少一个 PPTX、PDF 或 TXT 课程资料文件。", "error", [], ""
 
     full_text = format_sources_full_text(sources)
-    excerpt = choose_source_excerpt(question, sources)
     lowered = question.lower()
 
     if "summary" in lowered or "summarize" in lowered or "总结" in question:
-        return summarize_text(full_text, max_chars=9000), "summary", sources, excerpt
+        context = summarize_text(full_text, max_chars=9000)
+        excerpt = choose_source_excerpt(question, sources, preferred_text=context)
+        return context, "summary", sources, excerpt
 
     keyword = infer_keyword(question)
     result = search_in_text(full_text, keyword, max_results=14)
@@ -172,11 +198,15 @@ def retrieve_context(question, file_paths):
         for token in question_tokens(question):
             result = search_in_text(full_text, token, max_results=14)
             if result != "No relevant content found.":
+                excerpt = choose_source_excerpt(question, sources, preferred_text=result)
                 return result, "keyword-token-search", sources, excerpt
 
     if result == "No relevant content found.":
-        return summarize_text(full_text, max_chars=6500), "fallback-summary", sources, excerpt
+        context = summarize_text(full_text, max_chars=6500)
+        excerpt = choose_source_excerpt(question, sources, preferred_text=context)
+        return context, "fallback-summary", sources, excerpt
 
+    excerpt = choose_source_excerpt(question, sources, preferred_text=result)
     return result, "keyword-search", sources, excerpt
 
 
