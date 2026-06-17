@@ -10,7 +10,7 @@ VENDOR_DIR = Path(__file__).resolve().parent / ".vendor"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-from tools import read_local_file, search_in_text, summarize_text
+from tools import read_local_file, summarize_text
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -58,6 +58,9 @@ def infer_keyword(question):
         "说明",
         "解释",
         "什么是",
+        "有哪些",
+        "是什么",
+        "区别",
     ]
 
     for phrase in removable_phrases:
@@ -69,7 +72,20 @@ def infer_keyword(question):
 
 def question_tokens(question):
     tokens = re.findall(r"[A-Za-z][A-Za-z0-9_-]+|[\u4e00-\u9fff]{2,}", question)
-    stop_words = {"什么", "哪些", "这个", "这些", "资料", "课件", "内容", "主要", "区别"}
+    stop_words = {
+        "什么",
+        "哪些",
+        "这个",
+        "这些",
+        "资料",
+        "课件",
+        "文件",
+        "内容",
+        "主要",
+        "区别",
+        "总结",
+        "请总结",
+    }
     return [token.lower() for token in tokens if token not in stop_words]
 
 
@@ -109,18 +125,27 @@ def format_sources_full_text(sources):
 
 
 def split_source_blocks(source):
-    blocks = [block.strip() for block in source["text"].split("\n\n") if block.strip()]
-    if not blocks:
-        blocks = [line.strip() for line in source["text"].splitlines() if line.strip()]
+    raw_blocks = [block.strip() for block in source["text"].split("\n\n") if block.strip()]
+    if not raw_blocks:
+        raw_blocks = [line.strip() for line in source["text"].splitlines() if line.strip()]
 
-    return [
-        {
-            "file_name": source["file_name"],
-            "index": index,
-            "text": block,
-        }
-        for index, block in enumerate(blocks, start=1)
-    ]
+    blocks = []
+    for index, block in enumerate(raw_blocks, start=1):
+        label = f"{source['file_name']} / 片段 {index}"
+        first_line = block.splitlines()[0] if block.splitlines() else ""
+        if first_line.startswith("[Slide ") or first_line.startswith("[Page "):
+            label = f"{source['file_name']} / {first_line.strip('[]')}"
+
+        blocks.append(
+            {
+                "file_name": source["file_name"],
+                "index": index,
+                "label": label,
+                "text": block,
+            }
+        )
+
+    return blocks
 
 
 def trim_around_match(text, tokens, max_chars):
@@ -148,31 +173,71 @@ def trim_around_match(text, tokens, max_chars):
     return prefix + text[start:end].strip() + suffix
 
 
-def choose_source_excerpt(question, sources, preferred_text="", max_chars=4000):
+def rank_passages(question, sources):
     tokens = question_tokens(question)
     keyword = infer_keyword(question).lower()
-    preferred_lower = (preferred_text or "").lower()
-
     candidates = []
+
     for source in sources:
         candidates.extend(split_source_blocks(source))
 
     if not candidates:
-        return ""
+        return []
 
     def score(candidate):
         text = candidate["text"]
         lowered = text.lower()
         token_hits = sum(lowered.count(token) for token in tokens if token)
         unique_hits = sum(1 for token in tokens if token and token in lowered)
-        keyword_hit = 4 if keyword and keyword in lowered else 0
-        preferred_hit = 8 if preferred_lower and lowered[:220] in preferred_lower else 0
+        keyword_hit = 5 if keyword and keyword in lowered else 0
+        title_hit = 4 if any(token in candidate["label"].lower() for token in tokens) else 0
         density = token_hits / max(len(text), 1)
-        return (unique_hits * 10) + token_hits + keyword_hit + preferred_hit + density
+        final_score = (unique_hits * 12) + token_hits + keyword_hit + title_hit + density
+        return final_score, token_hits, unique_hits
 
-    selected = max(candidates, key=score)
-    excerpt = trim_around_match(selected["text"], tokens + [keyword], max_chars)
-    return f"===== {selected['file_name']} / 片段 {selected['index']} =====\n{excerpt}"
+    scored = []
+    for candidate in candidates:
+        final_score, token_hits, unique_hits = score(candidate)
+        candidate = dict(candidate)
+        candidate["_score"] = final_score
+        candidate["_token_hits"] = token_hits
+        candidate["_unique_hits"] = unique_hits
+        scored.append(candidate)
+
+    ranked = sorted(scored, key=lambda item: item["_score"], reverse=True)
+    positive = [candidate for candidate in ranked if candidate["_score"] > 0]
+    return positive or ranked[:1]
+
+
+def build_retrieved_context(question, sources, max_blocks=3, block_chars=900):
+    ranked = rank_passages(question, sources)
+    if not ranked:
+        return "", []
+
+    best_hits = ranked[0].get("_token_hits", 0)
+    if best_hits > 1:
+        min_hits = max(2, best_hits * 0.5)
+        ranked = [item for item in ranked if item.get("_token_hits", 0) >= min_hits]
+
+    selected = ranked[:max_blocks]
+    tokens = question_tokens(question) + [infer_keyword(question).lower()]
+
+    parts = []
+    for passage in selected:
+        text = trim_around_match(passage["text"], tokens, block_chars)
+        parts.append(f"===== {passage['label']} =====\n{text}")
+
+    return "\n\n---\n\n".join(parts), selected
+
+
+def build_source_excerpt(question, selected_passages, max_chars=1600):
+    if not selected_passages:
+        return ""
+
+    best = selected_passages[0]
+    tokens = question_tokens(question) + [infer_keyword(question).lower()]
+    text = trim_around_match(best["text"], tokens, max_chars)
+    return f"===== {best['label']} =====\n{text}"
 
 
 def retrieve_context(question, file_paths):
@@ -183,31 +248,17 @@ def retrieve_context(question, file_paths):
             return "\n".join(errors), "error", [], ""
         return "请先上传至少一个 PPTX、PDF 或 TXT 课程资料文件。", "error", [], ""
 
-    full_text = format_sources_full_text(sources)
     lowered = question.lower()
-
     if "summary" in lowered or "summarize" in lowered or "总结" in question:
-        context = summarize_text(full_text, max_chars=9000)
-        excerpt = choose_source_excerpt(question, sources, preferred_text=context)
-        return context, "summary", sources, excerpt
+        context, selected = build_retrieved_context(question, sources, max_blocks=5, block_chars=1100)
+        if not context:
+            context = summarize_text(format_sources_full_text(sources), max_chars=3500)
+        excerpt = build_source_excerpt(question, selected)
+        return context, "ranked-summary-context", sources, excerpt
 
-    keyword = infer_keyword(question)
-    result = search_in_text(full_text, keyword, max_results=14)
-
-    if result == "No relevant content found.":
-        for token in question_tokens(question):
-            result = search_in_text(full_text, token, max_results=14)
-            if result != "No relevant content found.":
-                excerpt = choose_source_excerpt(question, sources, preferred_text=result)
-                return result, "keyword-token-search", sources, excerpt
-
-    if result == "No relevant content found.":
-        context = summarize_text(full_text, max_chars=6500)
-        excerpt = choose_source_excerpt(question, sources, preferred_text=context)
-        return context, "fallback-summary", sources, excerpt
-
-    excerpt = choose_source_excerpt(question, sources, preferred_text=result)
-    return result, "keyword-search", sources, excerpt
+    context, selected = build_retrieved_context(question, sources)
+    excerpt = build_source_excerpt(question, selected)
+    return context, "ranked-passage-search", sources, excerpt
 
 
 def normalize_base_url(base_url):
