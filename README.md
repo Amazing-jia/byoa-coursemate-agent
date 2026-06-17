@@ -4,25 +4,26 @@
 
 CourseMate Agent is a single-purpose study assistant for local course materials.
 
-It reads a local PPT/PDF/TXT file, retrieves relevant course context, and uses an external OpenAI API call to generate a grounded answer. It also includes a simple web page for asking questions.
+It reads a local PPT/PDF/TXT file, retrieves relevant course context, and calls an external OpenAI-compatible AI API to generate a grounded answer. It also provides a Chinese web interface where users can enter an API key, choose a model, and upload their own local course file.
 
 ## Main Functions
 
 - Read local course materials from PPTX, PDF, and TXT files
+- Upload a course file from the user's computer through the web page
 - Search keywords in extracted course text
-- Send retrieved context to an external API for answer generation
-- Generate a short summary of the material
-- Provide a simple browser interface
+- Send retrieved context to an external AI API for answer generation
+- Support OpenAI-compatible API providers through custom Base URL and model name
+- Provide a Chinese browser interface
 
 ## Tools / Skills
 
 1. `read_local_file`: reads local PPTX, PDF, or TXT course files
 2. `search_in_text`: searches extracted text for keywords and returns relevant context
-3. `answer_with_openai`: calls the external OpenAI API to generate a final answer
+3. `answer_with_external_api`: calls an external OpenAI-compatible chat completions API
 
 ## Context Integration
 
-This project uses function-based context integration. The agent first calls local tools to read and retrieve course content, then passes the retrieved context to the OpenAI API. This makes the answer depend on the local course material instead of only the model's general knowledge.
+This project uses function-based context integration. The agent first calls local tools to read and retrieve course content, then passes the retrieved context to an external AI API. This makes the answer depend on the local course material instead of only the model's general knowledge.
 
 ## Core Prompt
 
@@ -61,18 +62,7 @@ Install dependencies:
 python -m pip install -r requirements.txt
 ```
 
-Create a `.env` file from `.env.example`:
-
-```text
-OPENAI_API_KEY=your_api_key_here
-OPENAI_MODEL=gpt-4.1-mini
-```
-
-## Run in Terminal
-
-```bash
-python main.py
-```
+If `python` is not available on this computer, use the bundled Codex Python path shown by the local environment.
 
 ## Run Web Page
 
@@ -88,14 +78,44 @@ http://127.0.0.1:5000
 
 The web page uses Python's built-in HTTP server, so no web framework is required.
 
-Example questions:
+## API Settings
+
+The web page supports OpenAI-compatible `/chat/completions` APIs. Enter the API key directly on the page.
+
+Common examples:
 
 ```text
-prompting
-summarize the main content
-What are zero-shot and k-shot prompting?
+OpenAI
+Base URL: https://api.openai.com/v1
+Model: gpt-4.1-mini
+
+DeepSeek
+Base URL: https://api.deepseek.com/v1
+Model: deepseek-chat
+
+DashScope / Qwen
+Base URL: https://dashscope.aliyuncs.com/compatible-mode/v1
+Model: qwen-plus
+
+Moonshot / Kimi
+Base URL: https://api.moonshot.cn/v1
+Model: moonshot-v1-8k
+
+Zhipu GLM
+Base URL: https://open.bigmodel.cn/api/paas/v4
+Model: glm-4-flash
+```
+
+You can also create a `.env` file from `.env.example`, but it is optional because the page allows entering the API key directly.
+
+## Example Questions
+
+```text
+总结这份课件的主要内容
+prompting 技术有哪些？
+zero-shot 和 k-shot prompting 有什么区别？
 ```
 
 ## Assignment Description
 
-CourseMate Agent is designed for the BYOA experiment as a tool-using single-purpose agent. It integrates local course material as external context and uses an external API for final answer generation.
+CourseMate Agent is designed for the BYOA experiment as a tool-using single-purpose agent. It integrates local course material as external context and uses an external AI API for final answer generation.

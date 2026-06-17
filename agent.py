@@ -1,6 +1,7 @@
-import os
-import sys
 import json
+import os
+import re
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -53,6 +54,12 @@ def infer_keyword(question):
         "please explain",
         "explain",
         "describe",
+        "总结",
+        "请总结",
+        "介绍",
+        "说明",
+        "解释",
+        "什么是",
     ]
 
     for phrase in removable_phrases:
@@ -70,32 +77,67 @@ def retrieve_context(question, file_path=DEFAULT_FILE_PATH):
 
     lowered = question.lower()
     if "summary" in lowered or "summarize" in lowered or "总结" in question:
-        return summarize_text(material_text, max_chars=5000), "summary"
+        return summarize_text(material_text, max_chars=7000), "summary"
 
     keyword = infer_keyword(question)
-    result = search_in_text(material_text, keyword, max_results=8)
+    result = search_in_text(material_text, keyword, max_results=10)
 
     if result == "No relevant content found.":
-        return summarize_text(material_text, max_chars=3500), "fallback-summary"
+        tokens = re.findall(r"[A-Za-z][A-Za-z0-9_-]+|[\u4e00-\u9fff]{2,}", question)
+        for token in tokens:
+            result = search_in_text(material_text, token, max_results=10)
+            if result != "No relevant content found.":
+                return result, "keyword-token-search"
+
+    if result == "No relevant content found.":
+        return summarize_text(material_text, max_chars=4500), "fallback-summary"
 
     return result, "keyword-search"
 
 
-def answer_with_openai(question, context, retrieval_mode):
-    api_key = os.getenv("OPENAI_API_KEY")
+def normalize_base_url(base_url):
+    url = (base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip()
+    return url.rstrip("/")
+
+
+def extract_chat_completion_text(data):
+    choices = data.get("choices") or []
+    if choices:
+        message = choices[0].get("message") or {}
+        content = message.get("content")
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("text"):
+                    parts.append(item["text"])
+            if parts:
+                return "\n".join(parts).strip()
+
+    if "output_text" in data:
+        return str(data["output_text"]).strip()
+
+    return "API 返回了结果，但没有找到可显示的文本内容。"
+
+
+def answer_with_external_api(question, context, retrieval_mode, api_config=None):
+    api_config = api_config or {}
+    api_key = (api_config.get("api_key") or os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
         return (
-            "OPENAI_API_KEY is not set. Add your API key to a .env file, then restart the app.\n\n"
-            "Example:\n"
-            "OPENAI_API_KEY=your_api_key_here\n"
-            "OPENAI_MODEL=gpt-4.1-mini"
+            "请先在页面左侧输入 API Key，或在项目 .env 文件中设置 OPENAI_API_KEY。\n\n"
+            "本次已经完成了本地资料检索，但没有调用外部 API。"
         )
 
-    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    model = (api_config.get("model") or os.getenv("OPENAI_MODEL") or "gpt-4.1-mini").strip()
+    base_url = normalize_base_url(api_config.get("base_url"))
+    endpoint = f"{base_url}/chat/completions"
     system_prompt = load_system_prompt()
+
     payload = {
         "model": model,
-        "input": [
+        "messages": [
             {
                 "role": "system",
                 "content": system_prompt,
@@ -103,17 +145,19 @@ def answer_with_openai(question, context, retrieval_mode):
             {
                 "role": "user",
                 "content": (
-                    f"User question:\n{question}\n\n"
-                    f"Retrieved local course context ({retrieval_mode}):\n{context}\n\n"
-                    "Answer the question using the retrieved context. "
-                    "If the context does not fully answer it, say what is missing."
+                    f"用户问题：\n{question}\n\n"
+                    f"本地课程资料检索结果（{retrieval_mode}）：\n{context}\n\n"
+                    "请基于检索到的课程资料回答。"
+                    "如果资料不足以回答，请明确说明缺少哪些信息。"
+                    "回答请使用中文，结构清晰，简洁准确。"
                 ),
             },
         ],
+        "temperature": 0.2,
     }
 
     request = urllib.request.Request(
-        "https://api.openai.com/v1/responses",
+        endpoint,
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -123,27 +167,20 @@ def answer_with_openai(question, context, retrieval_mode):
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=90) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
-        return f"OpenAI API request failed ({error.code}):\n{detail}"
+        return f"外部 API 请求失败（HTTP {error.code}）：\n{detail}"
     except urllib.error.URLError as error:
-        return f"OpenAI API connection failed: {error.reason}"
+        return f"外部 API 连接失败：{error.reason}"
+    except TimeoutError:
+        return "外部 API 请求超时，请检查网络、API 地址或模型名称。"
 
-    if "output_text" in data:
-        return data["output_text"].strip()
-
-    texts = []
-    for item in data.get("output", []):
-        for content in item.get("content", []):
-            if content.get("type") in {"output_text", "text"} and content.get("text"):
-                texts.append(content["text"])
-
-    return "\n".join(texts).strip() or "The API returned no text."
+    return extract_chat_completion_text(data)
 
 
-def answer_question(question, file_path=DEFAULT_FILE_PATH, use_api=True):
+def answer_question(question, file_path=DEFAULT_FILE_PATH, use_api=True, api_config=None):
     context, retrieval_mode = retrieve_context(question, file_path)
 
     if retrieval_mode == "error":
@@ -152,16 +189,14 @@ def answer_question(question, file_path=DEFAULT_FILE_PATH, use_api=True):
             "context": "",
             "retrieval_mode": retrieval_mode,
             "used_api": False,
+            "file_name": Path(file_path).name,
         }
 
     if use_api:
-        answer = answer_with_openai(question, context, retrieval_mode)
-        used_api = not answer.startswith("OPENAI_API_KEY is not set.")
+        answer = answer_with_external_api(question, context, retrieval_mode, api_config)
+        used_api = not answer.startswith("请先在页面左侧输入 API Key")
     else:
-        answer = (
-            "External API is disabled. Here is the retrieved local context:\n\n"
-            f"{context}"
-        )
+        answer = "已关闭外部 API 调用。以下是从本地资料检索到的内容：\n\n" + context
         used_api = False
 
     return {
@@ -169,4 +204,5 @@ def answer_question(question, file_path=DEFAULT_FILE_PATH, use_api=True):
         "context": context,
         "retrieval_mode": retrieval_mode,
         "used_api": used_api,
+        "file_name": Path(file_path).name,
     }

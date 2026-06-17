@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>CourseMate Agent</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <title>CourseMate Agent 课程学习助手</title>
+    <link rel="stylesheet" href="{{ style_href }}">
   </head>
   <body>
     <main class="app-shell">
@@ -12,85 +12,190 @@
         <header class="topbar">
           <div>
             <h1>CourseMate Agent</h1>
-            <p>Using local material: <strong>{{ file_name }}</strong></p>
+            <p>本地课程资料学习助手，默认资料：<strong>{{ file_name }}</strong></p>
           </div>
-          <span class="status">Local context + external API</span>
+          <span class="status">本地资料检索 + 外部 AI 接口</span>
         </header>
 
-        <form id="ask-form" class="ask-panel">
-          <label for="question">Question</label>
-          <div class="input-row">
-            <textarea
-              id="question"
-              name="question"
-              rows="3"
-              placeholder="Ask about prompting, Experiment 2, or summarize the main content"
-              required
-            ></textarea>
-            <button type="submit">Ask</button>
-          </div>
-        </form>
+        <section class="setup-grid">
+          <form id="ask-form" class="panel form-panel">
+            <div class="panel-heading">
+              <h2>提问与资料</h2>
+              <span>支持 PPTX / PDF / TXT</span>
+            </div>
 
-        <section class="examples" aria-label="Example questions">
-          <button type="button" data-question="prompting">prompting</button>
-          <button type="button" data-question="summarize the main content">summarize</button>
-          <button type="button" data-question="What are zero-shot and k-shot prompting?">zero-shot vs k-shot</button>
+            <div class="field">
+              <label for="material">选择你电脑中的课程资料</label>
+              <input id="material" name="material" type="file" accept=".pptx,.pdf,.txt">
+              <p class="hint">不上传时使用项目内默认 PPT：{{ file_name }}</p>
+            </div>
+
+            <div class="field">
+              <label for="question">你的问题</label>
+              <textarea
+                id="question"
+                name="question"
+                rows="4"
+                placeholder="例如：总结这份课件的主要内容 / prompting 技术有哪些 / zero-shot 和 k-shot 有什么区别"
+                required
+              ></textarea>
+            </div>
+
+            <div class="actions">
+              <button type="submit">开始回答</button>
+              <label class="toggle">
+                <input id="use-api" name="use_api" type="checkbox" checked>
+                <span>调用外部 AI</span>
+              </label>
+            </div>
+          </form>
+
+          <section class="panel config-panel">
+            <div class="panel-heading">
+              <h2>API 设置</h2>
+              <span>OpenAI 兼容接口</span>
+            </div>
+
+            <div class="field">
+              <label for="provider">常用平台</label>
+              <select id="provider">
+                <option value="openai">OpenAI</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="dashscope">通义千问 DashScope</option>
+                <option value="moonshot">Kimi / Moonshot</option>
+                <option value="zhipu">智谱 GLM</option>
+                <option value="custom">自定义兼容接口</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="api-key">API Key</label>
+              <input id="api-key" name="api_key" type="password" placeholder="在这里输入你的 API Key">
+              <p class="hint">API Key 只会随本次请求发送到你填写的 API 地址，不会写入代码仓库。</p>
+            </div>
+
+            <div class="field">
+              <label for="base-url">API Base URL</label>
+              <input id="base-url" name="base_url" type="text" value="https://api.openai.com/v1">
+            </div>
+
+            <div class="field">
+              <label for="model">模型名称</label>
+              <input id="model" name="model" type="text" value="gpt-4.1-mini">
+            </div>
+          </section>
+        </section>
+
+        <section class="examples" aria-label="示例问题">
+          <button type="button" data-question="总结这份课件的主要内容">总结课件</button>
+          <button type="button" data-question="prompting 技术有哪些？">prompting 技术</button>
+          <button type="button" data-question="zero-shot 和 k-shot prompting 有什么区别？">zero-shot vs k-shot</button>
         </section>
 
         <section class="result-grid">
           <article class="panel">
             <div class="panel-heading">
-              <h2>Agent Answer</h2>
-              <span id="api-badge">Ready</span>
+              <h2>Agent 回答</h2>
+              <span id="api-badge">待提问</span>
             </div>
-            <pre id="answer">Ask a question to start.</pre>
+            <pre id="answer">请先输入问题。页面会先检索本地资料，再调用你配置的 AI 接口生成回答。</pre>
           </article>
 
           <article class="panel">
             <div class="panel-heading">
-              <h2>Retrieved Context</h2>
+              <h2>检索到的课程上下文</h2>
               <span id="mode-badge">-</span>
             </div>
-            <pre id="context">The relevant course material will appear here.</pre>
+            <pre id="context">这里会显示从 PPT/PDF/TXT 中提取并检索到的内容。</pre>
           </article>
         </section>
       </section>
     </main>
 
     <script>
+      const providerPresets = {
+        openai: {
+          baseUrl: "https://api.openai.com/v1",
+          model: "gpt-4.1-mini"
+        },
+        deepseek: {
+          baseUrl: "https://api.deepseek.com/v1",
+          model: "deepseek-chat"
+        },
+        dashscope: {
+          baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          model: "qwen-plus"
+        },
+        moonshot: {
+          baseUrl: "https://api.moonshot.cn/v1",
+          model: "moonshot-v1-8k"
+        },
+        zhipu: {
+          baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+          model: "glm-4-flash"
+        },
+        custom: {
+          baseUrl: "",
+          model: ""
+        }
+      };
+
       const form = document.querySelector("#ask-form");
+      const provider = document.querySelector("#provider");
       const questionInput = document.querySelector("#question");
+      const fileInput = document.querySelector("#material");
+      const apiKeyInput = document.querySelector("#api-key");
+      const baseUrlInput = document.querySelector("#base-url");
+      const modelInput = document.querySelector("#model");
+      const useApiInput = document.querySelector("#use-api");
       const answer = document.querySelector("#answer");
       const context = document.querySelector("#context");
       const apiBadge = document.querySelector("#api-badge");
       const modeBadge = document.querySelector("#mode-badge");
 
+      provider.addEventListener("change", () => {
+        const preset = providerPresets[provider.value];
+        if (!preset) return;
+        baseUrlInput.value = preset.baseUrl;
+        modelInput.value = preset.model;
+      });
+
       async function askQuestion(question) {
-        answer.textContent = "Thinking...";
-        context.textContent = "Retrieving local course context...";
-        apiBadge.textContent = "Working";
+        answer.textContent = "正在检索资料并生成回答...";
+        context.textContent = "正在读取本地课程资料...";
+        apiBadge.textContent = "处理中";
         modeBadge.textContent = "-";
+
+        const formData = new FormData();
+        formData.append("question", question);
+        formData.append("api_key", apiKeyInput.value.trim());
+        formData.append("base_url", baseUrlInput.value.trim());
+        formData.append("model", modelInput.value.trim());
+        formData.append("use_api", useApiInput.checked ? "true" : "false");
+
+        if (fileInput.files.length > 0) {
+          formData.append("material", fileInput.files[0]);
+        }
 
         try {
           const response = await fetch("/ask", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ question })
+            body: formData
           });
 
           const data = await response.json();
           if (!response.ok) {
-            throw new Error(data.error || "Request failed.");
+            throw new Error(data.error || "请求失败。");
           }
 
           answer.textContent = data.answer;
-          context.textContent = data.context || "No context returned.";
-          apiBadge.textContent = data.used_api ? "API used" : "API not configured";
-          modeBadge.textContent = data.retrieval_mode;
+          context.textContent = data.context || "没有返回检索上下文。";
+          apiBadge.textContent = data.used_api ? "已调用 API" : "未调用 API";
+          modeBadge.textContent = `${data.retrieval_mode} · ${data.file_name}`;
         } catch (error) {
           answer.textContent = error.message;
           context.textContent = "";
-          apiBadge.textContent = "Error";
+          apiBadge.textContent = "出错";
         }
       }
 
