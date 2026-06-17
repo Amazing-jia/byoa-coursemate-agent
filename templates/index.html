@@ -139,27 +139,39 @@
       const providerPresets = {
         openai: {
           baseUrl: "https://api.openai.com/v1",
-          model: "gpt-4.1-mini"
+          model: "gpt-4.1-mini",
+          models: ["gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-4o"]
         },
         deepseek: {
           baseUrl: "https://api.deepseek.com/v1",
-          model: "deepseek-chat"
+          model: "deepseek-chat",
+          models: [
+            "deepseek-chat",
+            "deepseek-reasoner",
+            "deepseek-v4-flash",
+            "deepseek-v4-pro",
+            "deepseek-v4pro"
+          ]
         },
         dashscope: {
           baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-          model: "qwen-plus"
+          model: "qwen-plus",
+          models: ["qwen-plus", "qwen-max", "qwen-turbo", "qwen-long"]
         },
         moonshot: {
           baseUrl: "https://api.moonshot.cn/v1",
-          model: "moonshot-v1-8k"
+          model: "moonshot-v1-8k",
+          models: ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"]
         },
         zhipu: {
           baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-          model: "glm-4-flash"
+          model: "glm-4-flash",
+          models: ["glm-4-flash", "glm-4", "glm-4-plus", "glm-4-air"]
         },
         custom: {
           baseUrl: "",
-          model: ""
+          model: "",
+          models: []
         }
       };
 
@@ -183,16 +195,45 @@
       const modeBadge = document.querySelector("#mode-badge");
       const sourceBadge = document.querySelector("#source-badge");
 
-      function setModelOptions(models) {
+      function uniqueModels(models) {
+        return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)));
+      }
+
+      function presetModelsForProvider() {
+        const preset = providerPresets[provider.value];
+        return preset ? preset.models || [] : [];
+      }
+
+      function mergeModelOptions(apiModels = []) {
+        const currentModel = modelInput.value.trim();
+        return uniqueModels([
+          ...presetModelsForProvider(),
+          ...apiModels,
+          ...(currentModel ? [currentModel] : [])
+        ]);
+      }
+
+      function setModelOptions(models, apiModelCount = null) {
+        const cleanModels = uniqueModels(models);
         modelOptions.innerHTML = "";
-        for (const model of models) {
+        for (const model of cleanModels) {
           const option = document.createElement("option");
           option.value = model;
           modelOptions.appendChild(option);
         }
-        modelHint.textContent = models.length > 0
-          ? `已获取 ${models.length} 个模型，可直接输入或从候选中选择。`
+
+        if (apiModelCount === null) {
+          modelHint.textContent = cleanModels.length > 0
+            ? `已提供 ${cleanModels.length} 个模型候选，可直接输入或从候选中选择。`
+            : "该接口未返回模型列表，可以手动填写模型名称。";
+          return cleanModels;
+        }
+
+        const presetCount = presetModelsForProvider().length;
+        modelHint.textContent = cleanModels.length > 0
+          ? `接口返回 ${apiModelCount} 个模型，已合并 ${presetCount} 个平台预设候选；列表没有时仍可手动输入模型名。`
           : "该接口未返回模型列表，可以手动填写模型名称。";
+        return cleanModels;
       }
 
       function saveApiConfig(models = []) {
@@ -217,10 +258,12 @@
 
         if (savedModels) {
           try {
-            setModelOptions(JSON.parse(savedModels));
+            setModelOptions(mergeModelOptions(JSON.parse(savedModels)));
           } catch {
-            setModelOptions([]);
+            setModelOptions(presetModelsForProvider());
           }
+        } else {
+          setModelOptions(presetModelsForProvider());
         }
 
         if (savedKey) {
@@ -233,6 +276,7 @@
         if (!preset) return;
         baseUrlInput.value = preset.baseUrl;
         modelInput.value = preset.model;
+        setModelOptions(preset.models || []);
         connectionBadge.textContent = "未检测";
       });
 
@@ -261,8 +305,8 @@
             throw new Error(data.error || "连接失败。");
           }
 
-          const models = data.models || [];
-          setModelOptions(models);
+          const apiModels = data.models || [];
+          const models = setModelOptions(mergeModelOptions(apiModels), apiModels.length);
           if (models.length > 0 && !models.includes(modelInput.value.trim())) {
             modelInput.value = models[0];
           }
@@ -277,7 +321,7 @@
       forgetApiButton.addEventListener("click", () => {
         Object.values(STORAGE_KEYS).forEach((key) => localStorage.removeItem(key));
         apiKeyInput.value = "";
-        setModelOptions([]);
+        setModelOptions(presetModelsForProvider());
         connectionBadge.textContent = "已清除";
         modelHint.textContent = "已清除本浏览器保存的 API 设置。";
       });
