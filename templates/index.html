@@ -12,22 +12,22 @@
         <header class="topbar">
           <div>
             <h1>CourseMate Agent</h1>
-            <p>本地课程资料学习助手，默认资料：<strong>{{ file_name }}</strong></p>
+            <p>先上传你电脑中的课程资料，再基于资料向外部 AI 提问。</p>
           </div>
-          <span class="status">本地资料检索 + 外部 AI 接口</span>
+          <span class="status">上传资料检索 + 外部 AI 接口</span>
         </header>
 
         <section class="setup-grid">
           <form id="ask-form" class="panel form-panel">
             <div class="panel-heading">
               <h2>提问与资料</h2>
-              <span>支持 PPTX / PDF / TXT</span>
+              <span>必须上传文件</span>
             </div>
 
             <div class="field">
               <label for="material">选择你电脑中的课程资料</label>
-              <input id="material" name="material" type="file" accept=".pptx,.pdf,.txt">
-              <p class="hint">不上传时使用项目内默认 PPT：{{ file_name }}</p>
+              <input id="material" name="material" type="file" accept=".pptx,.pdf,.txt" required>
+              <p class="hint">支持 PPTX、PDF、TXT。项目不再内置默认课程文件。</p>
             </div>
 
             <div class="field">
@@ -98,7 +98,7 @@
               <h2>Agent 回答</h2>
               <span id="api-badge">待提问</span>
             </div>
-            <pre id="answer">请先输入问题。页面会先检索本地资料，再调用你配置的 AI 接口生成回答。</pre>
+            <pre id="answer">请先上传课程资料并输入问题。页面会先检索上传资料，再调用你配置的 AI 接口生成回答。</pre>
           </article>
 
           <article class="panel">
@@ -106,7 +106,7 @@
               <h2>检索到的课程上下文</h2>
               <span id="mode-badge">-</span>
             </div>
-            <pre id="context">这里会显示从 PPT/PDF/TXT 中提取并检索到的内容。</pre>
+            <pre id="context">这里会显示从上传的 PPT/PDF/TXT 中提取并检索到的内容。</pre>
           </article>
         </section>
       </section>
@@ -161,8 +161,15 @@
       });
 
       async function askQuestion(question) {
+        if (fileInput.files.length === 0) {
+          answer.textContent = "请先上传一个 PPTX、PDF 或 TXT 课程资料文件。";
+          context.textContent = "";
+          apiBadge.textContent = "缺少文件";
+          return;
+        }
+
         answer.textContent = "正在检索资料并生成回答...";
-        context.textContent = "正在读取本地课程资料...";
+        context.textContent = "正在读取上传的课程资料...";
         apiBadge.textContent = "处理中";
         modeBadge.textContent = "-";
 
@@ -172,10 +179,7 @@
         formData.append("base_url", baseUrlInput.value.trim());
         formData.append("model", modelInput.value.trim());
         formData.append("use_api", useApiInput.checked ? "true" : "false");
-
-        if (fileInput.files.length > 0) {
-          formData.append("material", fileInput.files[0]);
-        }
+        formData.append("material", fileInput.files[0]);
 
         try {
           const response = await fetch("/ask", {

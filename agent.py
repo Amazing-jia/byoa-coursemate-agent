@@ -14,7 +14,6 @@ from tools import read_local_file, search_in_text, summarize_text
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_FILE_PATH = BASE_DIR / "data" / "Week 13-15.pptx"
 SYSTEM_PROMPT_PATH = BASE_DIR / "prompts" / "system_prompt.txt"
 
 
@@ -69,7 +68,10 @@ def infer_keyword(question):
     return keyword or cleaned
 
 
-def retrieve_context(question, file_path=DEFAULT_FILE_PATH):
+def retrieve_context(question, file_path):
+    if not file_path:
+        return "请先上传一个 PPTX、PDF 或 TXT 课程资料文件。", "error"
+
     material_text = read_local_file(file_path)
 
     if material_text.startswith("File not found") or material_text.startswith("Unsupported"):
@@ -126,7 +128,7 @@ def answer_with_external_api(question, context, retrieval_mode, api_config=None)
     api_key = (api_config.get("api_key") or os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
         return (
-            "请先在页面左侧输入 API Key，或在项目 .env 文件中设置 OPENAI_API_KEY。\n\n"
+            "请先在页面右侧输入 API Key，或在项目 .env 文件中设置 OPENAI_API_KEY。\n\n"
             "本次已经完成了本地资料检索，但没有调用外部 API。"
         )
 
@@ -138,10 +140,7 @@ def answer_with_external_api(question, context, retrieval_mode, api_config=None)
     payload = {
         "model": model,
         "messages": [
-            {
-                "role": "system",
-                "content": system_prompt,
-            },
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": (
@@ -180,8 +179,9 @@ def answer_with_external_api(question, context, retrieval_mode, api_config=None)
     return extract_chat_completion_text(data)
 
 
-def answer_question(question, file_path=DEFAULT_FILE_PATH, use_api=True, api_config=None):
+def answer_question(question, file_path=None, use_api=True, api_config=None):
     context, retrieval_mode = retrieve_context(question, file_path)
+    file_name = Path(file_path).name if file_path else "未上传文件"
 
     if retrieval_mode == "error":
         return {
@@ -189,14 +189,14 @@ def answer_question(question, file_path=DEFAULT_FILE_PATH, use_api=True, api_con
             "context": "",
             "retrieval_mode": retrieval_mode,
             "used_api": False,
-            "file_name": Path(file_path).name,
+            "file_name": file_name,
         }
 
     if use_api:
         answer = answer_with_external_api(question, context, retrieval_mode, api_config)
-        used_api = not answer.startswith("请先在页面左侧输入 API Key")
+        used_api = not answer.startswith("请先在页面右侧输入 API Key")
     else:
-        answer = "已关闭外部 API 调用。以下是从本地资料检索到的内容：\n\n" + context
+        answer = "已关闭外部 API 调用。以下是从上传资料中检索到的内容：\n\n" + context
         used_api = False
 
     return {
@@ -204,5 +204,5 @@ def answer_question(question, file_path=DEFAULT_FILE_PATH, use_api=True, api_con
         "context": context,
         "retrieval_mode": retrieval_mode,
         "used_api": used_api,
-        "file_name": Path(file_path).name,
+        "file_name": file_name,
     }

@@ -1,39 +1,39 @@
-# CourseMate Agent
+# CourseMate Agent：本地课程资料学习助手
 
-## Overview
+## 项目简介
 
-CourseMate Agent is a single-purpose study assistant for local course materials.
+CourseMate Agent 是一个面向课程学习场景的单一用途 Agent。用户需要在网页中上传自己电脑里的课程资料文件，然后输入问题。系统会先读取并检索上传文件中的内容，再把检索到的上下文发送给外部 AI API，生成基于资料的回答。
 
-It reads a local PPT/PDF/TXT file, retrieves relevant course context, and calls an external OpenAI-compatible AI API to generate a grounded answer. It also provides a Chinese web interface where users can enter an API key, choose a model, and upload their own local course file.
+本项目默认不内置课程资料文件，也不会自动调用任何默认文件。每次使用时都需要由用户上传 PPTX、PDF 或 TXT 文件。
 
-## Main Functions
+## 主要功能
 
-- Read local course materials from PPTX, PDF, and TXT files
-- Upload a course file from the user's computer through the web page
-- Search keywords in extracted course text
-- Send retrieved context to an external AI API for answer generation
-- Support OpenAI-compatible API providers through custom Base URL and model name
-- Provide a Chinese browser interface
+- 上传本机课程资料文件
+- 支持读取 `.pptx`、`.pdf`、`.txt`
+- 根据用户问题检索资料中的相关内容
+- 支持关闭外部 AI，只查看本地检索结果
+- 支持通过 OpenAI-compatible API 调用多个 AI 平台
+- 提供中文网页界面
 
-## Tools / Skills
+## 工具 / Skills
 
-1. `read_local_file`: reads local PPTX, PDF, or TXT course files
-2. `search_in_text`: searches extracted text for keywords and returns relevant context
-3. `answer_with_external_api`: calls an external OpenAI-compatible chat completions API
+1. `read_local_file`：读取用户上传的 PPTX、PDF 或 TXT 文件
+2. `search_in_text`：在提取出的文本中进行关键词检索
+3. `answer_with_external_api`：调用外部 OpenAI-compatible API 生成最终回答
 
-## Context Integration
+## Context 集成方式
 
-This project uses function-based context integration. The agent first calls local tools to read and retrieve course content, then passes the retrieved context to an external AI API. This makes the answer depend on the local course material instead of only the model's general knowledge.
+本项目采用基于函数调用的上下文集成方式。Agent 不直接依赖模型自身知识回答问题，而是先调用本地文件读取工具提取课程资料文本，再调用检索工具找到和问题相关的内容，最后把检索结果作为外部上下文传入 AI API。
 
-## Core Prompt
+## 核心 Prompt
 
-The core prompt is stored in:
+核心 prompt 存放在：
 
 ```text
 prompts/system_prompt.txt
 ```
 
-## Project Structure
+## 项目结构
 
 ```text
 byoa-coursemate-agent/
@@ -45,8 +45,6 @@ byoa-coursemate-agent/
 ├── README.md
 ├── prompts/
 │   └── system_prompt.txt
-├── data/
-│   └── Week 13-15.pptx
 ├── templates/
 │   └── index.html
 ├── static/
@@ -54,35 +52,39 @@ byoa-coursemate-agent/
 └── screenshots/
 ```
 
-## Setup
-
-Install dependencies:
+## 安装依赖
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-If `python` is not available on this computer, use the bundled Codex Python path shown by the local environment.
+如果本机 `python` 命令不可用，可以使用 Codex 环境中的 Python 路径运行。
 
-## Run Web Page
+## 启动网页
 
 ```bash
 python app.py
 ```
 
-Then open:
+然后在浏览器打开：
 
 ```text
 http://127.0.0.1:5000
 ```
 
-The web page uses Python's built-in HTTP server, so no web framework is required.
+## 使用步骤
 
-## API Settings
+1. 打开网页。
+2. 上传一个 `.pptx`、`.pdf` 或 `.txt` 课程资料文件。
+3. 输入问题，例如“总结这份课件的主要内容”。
+4. 在右侧填写 API Key、API Base URL 和模型名称。
+5. 点击“开始回答”。
 
-The web page supports OpenAI-compatible `/chat/completions` APIs. Enter the API key directly on the page.
+如果只想测试本地读取和检索功能，可以取消勾选“调用外部 AI”。
 
-Common examples:
+## API 设置示例
+
+本项目使用 OpenAI-compatible `/chat/completions` 接口。常见填写方式如下：
 
 ```text
 OpenAI
@@ -93,22 +95,20 @@ DeepSeek
 Base URL: https://api.deepseek.com/v1
 Model: deepseek-chat
 
-DashScope / Qwen
+通义千问 DashScope
 Base URL: https://dashscope.aliyuncs.com/compatible-mode/v1
 Model: qwen-plus
 
-Moonshot / Kimi
+Kimi / Moonshot
 Base URL: https://api.moonshot.cn/v1
 Model: moonshot-v1-8k
 
-Zhipu GLM
+智谱 GLM
 Base URL: https://open.bigmodel.cn/api/paas/v4
 Model: glm-4-flash
 ```
 
-You can also create a `.env` file from `.env.example`, but it is optional because the page allows entering the API key directly.
-
-## Example Questions
+## 示例问题
 
 ```text
 总结这份课件的主要内容
@@ -116,6 +116,6 @@ prompting 技术有哪些？
 zero-shot 和 k-shot prompting 有什么区别？
 ```
 
-## Assignment Description
+## 实验说明
 
-CourseMate Agent is designed for the BYOA experiment as a tool-using single-purpose agent. It integrates local course material as external context and uses an external AI API for final answer generation.
+CourseMate Agent 符合 BYOA 实验中 single-purpose agent 的要求。它使用了多个工具/skills，包括本地文件读取、关键词检索和外部 API 调用，并通过上传文件实现外部上下文集成。

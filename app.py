@@ -10,7 +10,7 @@ VENDOR_DIR = Path(__file__).resolve().parent / ".vendor"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-from agent import DEFAULT_FILE_PATH, answer_question
+from agent import answer_question
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -61,7 +61,6 @@ class CourseMateHandler(BaseHTTPRequestHandler):
 
         if path == "/":
             html = (BASE_DIR / "templates" / "index.html").read_text(encoding="utf-8")
-            html = html.replace("{{ file_name }}", DEFAULT_FILE_PATH.name)
             html = html.replace("{{ style_href }}", "/static/style.css")
             self._send(200, html, "text/html; charset=utf-8")
             return
@@ -95,7 +94,11 @@ class CourseMateHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "请输入问题。"})
             return
 
-        file_path = data.get("file_path") or DEFAULT_FILE_PATH
+        file_path = data.get("file_path")
+        if not file_path:
+            self._send_json(400, {"error": "请先上传一个 PPTX、PDF 或 TXT 课程资料文件。"})
+            return
+
         api_config = {
             "api_key": data.get("api_key", ""),
             "base_url": data.get("base_url", ""),
@@ -120,7 +123,7 @@ class CourseMateHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return 400, {"error": "请求格式错误。"}
 
-        data["file_path"] = DEFAULT_FILE_PATH
+        data["file_path"] = None
         return data
 
     def _parse_multipart(self):
@@ -138,7 +141,7 @@ class CourseMateHandler(BaseHTTPRequestHandler):
             field = form[key] if key in form else None
             data[key] = field.value if field is not None and not field.filename else ""
 
-        data["file_path"] = DEFAULT_FILE_PATH
+        data["file_path"] = None
         upload = form["material"] if "material" in form else None
         if upload is not None and upload.filename:
             upload_name = safe_filename(upload.filename)
