@@ -7,14 +7,17 @@ from agent import answer_question
 def main():
     parser = argparse.ArgumentParser(description="CourseMate Agent command-line interface")
     parser.add_argument(
-        "file",
-        help="Path to a PPTX, PDF, or TXT course material file.",
+        "files",
+        nargs="+",
+        help="One or more PPTX, PDF, or TXT course material files.",
     )
     args = parser.parse_args()
 
-    file_path = Path(args.file)
+    file_paths = [Path(file) for file in args.files]
     print("CourseMate Agent started.")
-    print(f"Using uploaded/local material: {file_path}")
+    print("Using uploaded/local materials:")
+    for file_path in file_paths:
+        print(f"- {file_path}")
     print("Type a question, or type 'exit' to quit.")
     print()
 
@@ -26,11 +29,13 @@ def main():
         if not question:
             continue
 
-        result = answer_question(question, file_path=file_path)
+        result = answer_question(question, file_paths=file_paths)
         print("\n[Agent Answer]")
         print(result["answer"])
         print("\n[Retrieved Context]")
         print(result["context"][:1200])
+        print("\n[Called File Original Text]")
+        print(result["source_text"][:1200])
         print()
 
 

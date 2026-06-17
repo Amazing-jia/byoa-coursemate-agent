@@ -2,6 +2,7 @@ import cgi
 import json
 import re
 import sys
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -41,6 +42,12 @@ def unique_upload_path(filename):
         counter += 1
 
 
+def as_field_list(field):
+    if field is None:
+        return []
+    return field if isinstance(field, list) else [field]
+
+
 class CourseMateHandler(BaseHTTPRequestHandler):
     def _send_bytes(self, status, body, content_type):
         self.send_response(status)
@@ -73,46 +80,55 @@ class CourseMateHandler(BaseHTTPRequestHandler):
         self._send(404, "Not found")
 
     def do_POST(self):
-        path = urlparse(self.path).path
-        if path != "/ask":
-            self._send(404, "Not found")
-            return
+        try:
+            path = urlparse(self.path).path
+            if path != "/ask":
+                self._send(404, "Not found")
+                return
 
-        content_type = self.headers.get("Content-Type", "")
-        if "multipart/form-data" in content_type:
-            data = self._parse_multipart()
-        else:
-            data = self._parse_json()
+            content_type = self.headers.get("Content-Type", "")
+            if "multipart/form-data" in content_type:
+                data = self._parse_multipart()
+            else:
+                data = self._parse_json()
 
-        if isinstance(data, tuple):
-            status, payload = data
-            self._send_json(status, payload)
-            return
+            if isinstance(data, tuple):
+                status, payload = data
+                self._send_json(status, payload)
+                return
 
-        question = data["question"].strip()
-        if not question:
-            self._send_json(400, {"error": "请输入问题。"})
-            return
+            question = data["question"].strip()
+            if not question:
+                self._send_json(400, {"error": "请输入问题。"})
+                return
 
-        file_path = data.get("file_path")
-        if not file_path:
-            self._send_json(400, {"error": "请先上传一个 PPTX、PDF 或 TXT 课程资料文件。"})
-            return
+            file_paths = data.get("file_paths") or []
+            if not file_paths:
+                self._send_json(400, {"error": "请先上传至少一个 PPTX、PDF 或 TXT 课程资料文件。"})
+                return
 
-        api_config = {
-            "api_key": data.get("api_key", ""),
-            "base_url": data.get("base_url", ""),
-            "model": data.get("model", ""),
-        }
-        use_api = data.get("use_api", "true") != "false"
+            api_config = {
+                "api_key": data.get("api_key", ""),
+                "base_url": data.get("base_url", ""),
+                "model": data.get("model", ""),
+            }
+            use_api = data.get("use_api", "true") != "false"
 
-        result = answer_question(
-            question,
-            file_path=file_path,
-            use_api=use_api,
-            api_config=api_config,
-        )
-        self._send_json(200, result)
+            result = answer_question(
+                question,
+                file_paths=file_paths,
+                use_api=use_api,
+                api_config=api_config,
+            )
+            self._send_json(200, result)
+        except Exception as error:
+            self._send_json(
+                500,
+                {
+                    "error": str(error),
+                    "traceback": traceback.format_exc(),
+                },
+            )
 
     def _parse_json(self):
         length = int(self.headers.get("Content-Length", "0"))
@@ -123,7 +139,7 @@ class CourseMateHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return 400, {"error": "请求格式错误。"}
 
-        data["file_path"] = None
+        data["file_paths"] = []
         return data
 
     def _parse_multipart(self):
@@ -133,6 +149,7 @@ class CourseMateHandler(BaseHTTPRequestHandler):
             environ={
                 "REQUEST_METHOD": "POST",
                 "CONTENT_TYPE": self.headers.get("Content-Type"),
+                "CONTENT_LENGTH": self.headers.get("Content-Length", "0"),
             },
         )
 
@@ -141,9 +158,13 @@ class CourseMateHandler(BaseHTTPRequestHandler):
             field = form[key] if key in form else None
             data[key] = field.value if field is not None and not field.filename else ""
 
-        data["file_path"] = None
-        upload = form["material"] if "material" in form else None
-        if upload is not None and upload.filename:
+        file_paths = []
+        material_field = form["material"] if "material" in form else None
+        uploads = as_field_list(material_field)
+        for upload in uploads:
+            if upload is None or not getattr(upload, "filename", ""):
+                continue
+
             upload_name = safe_filename(upload.filename)
             suffix = Path(upload_name).suffix.lower()
             if suffix not in ALLOWED_SUFFIXES:
@@ -153,8 +174,9 @@ class CourseMateHandler(BaseHTTPRequestHandler):
             with open(upload_path, "wb") as file:
                 file.write(upload.file.read())
 
-            data["file_path"] = upload_path
+            file_paths.append(upload_path)
 
+        data["file_paths"] = file_paths
         return data
 
 

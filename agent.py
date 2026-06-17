@@ -43,7 +43,6 @@ def load_system_prompt():
 def infer_keyword(question):
     cleaned = question.strip()
     lowered = cleaned.lower()
-
     removable_phrases = [
         "what is",
         "what are",
@@ -68,33 +67,71 @@ def infer_keyword(question):
     return keyword or cleaned
 
 
-def retrieve_context(question, file_path):
-    if not file_path:
-        return "请先上传一个 PPTX、PDF 或 TXT 课程资料文件。", "error"
+def normalize_file_paths(file_paths):
+    if not file_paths:
+        return []
+    if isinstance(file_paths, (str, Path)):
+        return [Path(file_paths)]
+    return [Path(path) for path in file_paths if path]
 
-    material_text = read_local_file(file_path)
 
-    if material_text.startswith("File not found") or material_text.startswith("Unsupported"):
-        return material_text, "error"
+def read_materials(file_paths):
+    paths = normalize_file_paths(file_paths)
+    sources = []
+    errors = []
 
+    for path in paths:
+        text = read_local_file(path)
+        if text.startswith("File not found") or text.startswith("Unsupported"):
+            errors.append(text)
+            continue
+
+        sources.append(
+            {
+                "file_name": path.name,
+                "path": str(path),
+                "text": text,
+            }
+        )
+
+    return sources, errors
+
+
+def format_sources_full_text(sources):
+    parts = []
+    for source in sources:
+        parts.append(f"===== {source['file_name']} =====\n{source['text']}")
+    return "\n\n".join(parts)
+
+
+def retrieve_context(question, file_paths):
+    sources, errors = read_materials(file_paths)
+
+    if not sources:
+        if errors:
+            return "\n".join(errors), "error", [], ""
+        return "请先上传至少一个 PPTX、PDF 或 TXT 课程资料文件。", "error", [], ""
+
+    full_text = format_sources_full_text(sources)
     lowered = question.lower()
+
     if "summary" in lowered or "summarize" in lowered or "总结" in question:
-        return summarize_text(material_text, max_chars=7000), "summary"
+        return summarize_text(full_text, max_chars=9000), "summary", sources, full_text
 
     keyword = infer_keyword(question)
-    result = search_in_text(material_text, keyword, max_results=10)
+    result = search_in_text(full_text, keyword, max_results=14)
 
     if result == "No relevant content found.":
         tokens = re.findall(r"[A-Za-z][A-Za-z0-9_-]+|[\u4e00-\u9fff]{2,}", question)
         for token in tokens:
-            result = search_in_text(material_text, token, max_results=10)
+            result = search_in_text(full_text, token, max_results=14)
             if result != "No relevant content found.":
-                return result, "keyword-token-search"
+                return result, "keyword-token-search", sources, full_text
 
     if result == "No relevant content found.":
-        return summarize_text(material_text, max_chars=4500), "fallback-summary"
+        return summarize_text(full_text, max_chars=6500), "fallback-summary", sources, full_text
 
-    return result, "keyword-search"
+    return result, "keyword-search", sources, full_text
 
 
 def normalize_base_url(base_url):
@@ -179,17 +216,19 @@ def answer_with_external_api(question, context, retrieval_mode, api_config=None)
     return extract_chat_completion_text(data)
 
 
-def answer_question(question, file_path=None, use_api=True, api_config=None):
-    context, retrieval_mode = retrieve_context(question, file_path)
-    file_name = Path(file_path).name if file_path else "未上传文件"
+def answer_question(question, file_paths=None, use_api=True, api_config=None):
+    context, retrieval_mode, sources, full_text = retrieve_context(question, file_paths)
+    file_names = [source["file_name"] for source in sources]
 
     if retrieval_mode == "error":
         return {
             "answer": context,
             "context": "",
+            "source_text": "",
             "retrieval_mode": retrieval_mode,
             "used_api": False,
-            "file_name": file_name,
+            "file_names": file_names,
+            "file_name": "未上传文件",
         }
 
     if use_api:
@@ -202,7 +241,9 @@ def answer_question(question, file_path=None, use_api=True, api_config=None):
     return {
         "answer": answer,
         "context": context,
+        "source_text": full_text,
         "retrieval_mode": retrieval_mode,
         "used_api": used_api,
-        "file_name": file_name,
+        "file_names": file_names,
+        "file_name": "、".join(file_names),
     }
