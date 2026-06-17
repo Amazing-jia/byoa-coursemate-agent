@@ -70,8 +70,8 @@
 
             <div class="field">
               <label for="api-key">API Key</label>
-              <input id="api-key" name="api_key" type="password" placeholder="在这里输入你的 API Key">
-              <p class="hint">API Key 只会随本次请求发送到你填写的 API 地址，不会写入代码仓库。</p>
+              <input id="api-key" name="api_key" type="password" autocomplete="off" placeholder="在这里输入你的 API Key">
+              <p class="hint">提交后页面会自动清空 API Key，避免截图或演示时泄露。</p>
             </div>
 
             <div class="field">
@@ -112,10 +112,10 @@
 
         <section class="panel source-panel">
           <div class="panel-heading">
-            <h2>本次调用文件原文</h2>
+            <h2>最相关原文片段</h2>
             <span id="source-badge">未上传</span>
           </div>
-          <pre id="source-text">这里会显示本次上传并被 Agent 调用的文件原文。PPT/PDF 会显示提取出的文本内容。</pre>
+          <pre id="source-excerpt">这里只显示与当前问题最接近的一段原文，不展示完整课程资料。</pre>
         </section>
       </section>
     </main>
@@ -158,7 +158,7 @@
       const useApiInput = document.querySelector("#use-api");
       const answer = document.querySelector("#answer");
       const context = document.querySelector("#context");
-      const sourceText = document.querySelector("#source-text");
+      const sourceExcerpt = document.querySelector("#source-excerpt");
       const apiBadge = document.querySelector("#api-badge");
       const modeBadge = document.querySelector("#mode-badge");
       const sourceBadge = document.querySelector("#source-badge");
@@ -174,7 +174,7 @@
         if (fileInput.files.length === 0) {
           answer.textContent = "请先上传至少一个 PPTX、PDF 或 TXT 课程资料文件。";
           context.textContent = "";
-          sourceText.textContent = "";
+          sourceExcerpt.textContent = "";
           apiBadge.textContent = "缺少文件";
           sourceBadge.textContent = "未上传";
           return;
@@ -182,14 +182,15 @@
 
         answer.textContent = "正在检索资料并生成回答...";
         context.textContent = "正在读取上传的课程资料...";
-        sourceText.textContent = "正在提取文件原文...";
+        sourceExcerpt.textContent = "正在选择最相关原文片段...";
         apiBadge.textContent = "处理中";
         modeBadge.textContent = "-";
         sourceBadge.textContent = `${fileInput.files.length} 个文件`;
 
+        const apiKey = apiKeyInput.value.trim();
         const formData = new FormData();
         formData.append("question", question);
-        formData.append("api_key", apiKeyInput.value.trim());
+        formData.append("api_key", apiKey);
         formData.append("base_url", baseUrlInput.value.trim());
         formData.append("model", modelInput.value.trim());
         formData.append("use_api", useApiInput.checked ? "true" : "false");
@@ -197,6 +198,8 @@
         for (const file of fileInput.files) {
           formData.append("material", file);
         }
+
+        apiKeyInput.value = "";
 
         try {
           const response = await fetch("/ask", {
@@ -211,14 +214,14 @@
 
           answer.textContent = data.answer;
           context.textContent = data.context || "没有返回检索上下文。";
-          sourceText.textContent = data.source_text || "没有返回文件原文。";
+          sourceExcerpt.textContent = data.source_excerpt || "没有返回相关原文片段。";
           apiBadge.textContent = data.used_api ? "已调用 API" : "未调用 API";
           modeBadge.textContent = `${data.retrieval_mode} · ${data.file_name}`;
           sourceBadge.textContent = data.file_name || `${fileInput.files.length} 个文件`;
         } catch (error) {
           answer.textContent = error.message;
           context.textContent = "";
-          sourceText.textContent = "";
+          sourceExcerpt.textContent = "";
           apiBadge.textContent = "出错";
         }
       }

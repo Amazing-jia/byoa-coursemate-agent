@@ -34,8 +34,8 @@ def main():
         print(result["answer"])
         print("\n[Retrieved Context]")
         print(result["context"][:1200])
-        print("\n[Called File Original Text]")
-        print(result["source_text"][:1200])
+        print("\n[Most Relevant Original Excerpt]")
+        print(result["source_excerpt"][:1200])
         print()
 
 

@@ -67,6 +67,11 @@ def infer_keyword(question):
     return keyword or cleaned
 
 
+def question_tokens(question):
+    tokens = re.findall(r"[A-Za-z][A-Za-z0-9_-]+|[\u4e00-\u9fff]{2,}", question)
+    return [token.lower() for token in tokens]
+
+
 def normalize_file_paths(file_paths):
     if not file_paths:
         return []
@@ -104,6 +109,47 @@ def format_sources_full_text(sources):
     return "\n\n".join(parts)
 
 
+def split_source_blocks(source):
+    raw_blocks = [block.strip() for block in source["text"].split("\n\n") if block.strip()]
+    if not raw_blocks:
+        raw_blocks = [line.strip() for line in source["text"].splitlines() if line.strip()]
+
+    return [
+        {
+            "file_name": source["file_name"],
+            "text": block,
+        }
+        for block in raw_blocks
+    ]
+
+
+def choose_source_excerpt(question, sources, max_chars=1800):
+    tokens = question_tokens(question)
+    keyword = infer_keyword(question).lower()
+    blocks = []
+
+    for source in sources:
+        blocks.extend(split_source_blocks(source))
+
+    if not blocks:
+        return ""
+
+    def score(block):
+        text = block["text"].lower()
+        token_score = sum(1 for token in tokens if token in text)
+        keyword_score = 3 if keyword and keyword in text else 0
+        return token_score + keyword_score
+
+    ranked = sorted(blocks, key=score, reverse=True)
+    selected = ranked[0]
+    excerpt = f"===== {selected['file_name']} =====\n{selected['text']}"
+
+    if len(excerpt) > max_chars:
+        excerpt = excerpt[:max_chars].rstrip() + "..."
+
+    return excerpt
+
+
 def retrieve_context(question, file_paths):
     sources, errors = read_materials(file_paths)
 
@@ -113,25 +159,25 @@ def retrieve_context(question, file_paths):
         return "请先上传至少一个 PPTX、PDF 或 TXT 课程资料文件。", "error", [], ""
 
     full_text = format_sources_full_text(sources)
+    excerpt = choose_source_excerpt(question, sources)
     lowered = question.lower()
 
     if "summary" in lowered or "summarize" in lowered or "总结" in question:
-        return summarize_text(full_text, max_chars=9000), "summary", sources, full_text
+        return summarize_text(full_text, max_chars=9000), "summary", sources, excerpt
 
     keyword = infer_keyword(question)
     result = search_in_text(full_text, keyword, max_results=14)
 
     if result == "No relevant content found.":
-        tokens = re.findall(r"[A-Za-z][A-Za-z0-9_-]+|[\u4e00-\u9fff]{2,}", question)
-        for token in tokens:
+        for token in question_tokens(question):
             result = search_in_text(full_text, token, max_results=14)
             if result != "No relevant content found.":
-                return result, "keyword-token-search", sources, full_text
+                return result, "keyword-token-search", sources, excerpt
 
     if result == "No relevant content found.":
-        return summarize_text(full_text, max_chars=6500), "fallback-summary", sources, full_text
+        return summarize_text(full_text, max_chars=6500), "fallback-summary", sources, excerpt
 
-    return result, "keyword-search", sources, full_text
+    return result, "keyword-search", sources, excerpt
 
 
 def normalize_base_url(base_url):
@@ -217,14 +263,14 @@ def answer_with_external_api(question, context, retrieval_mode, api_config=None)
 
 
 def answer_question(question, file_paths=None, use_api=True, api_config=None):
-    context, retrieval_mode, sources, full_text = retrieve_context(question, file_paths)
+    context, retrieval_mode, sources, source_excerpt = retrieve_context(question, file_paths)
     file_names = [source["file_name"] for source in sources]
 
     if retrieval_mode == "error":
         return {
             "answer": context,
             "context": "",
-            "source_text": "",
+            "source_excerpt": "",
             "retrieval_mode": retrieval_mode,
             "used_api": False,
             "file_names": file_names,
@@ -241,7 +287,7 @@ def answer_question(question, file_paths=None, use_api=True, api_config=None):
     return {
         "answer": answer,
         "context": context,
-        "source_text": full_text,
+        "source_excerpt": source_excerpt,
         "retrieval_mode": retrieval_mode,
         "used_api": used_api,
         "file_names": file_names,
